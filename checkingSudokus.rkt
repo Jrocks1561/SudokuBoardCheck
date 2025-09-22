@@ -1,57 +1,99 @@
-#lang racket 
+#lang racket
 (provide readSudoku)
+(require racket/string)
 
-;;this built in racket function converts the string to numbers and splits the string by spaces
-(define (string->sudoku-row line-string)
-  (map string->number (string-split line-string " "))) 
+;; global variables 
+;; to track if the current board is valid
+;; and to store results
+(define is-board-valid #t)
+(define board-results (make-hash))
 
-;; Function to check if a list has no duplicate values
-(define (no-dups? lst)
-  (= (length lst) (length (remove-duplicates lst))))
+;; helper functions
+;; helper check if a row is blank or convert a string to a list of numbers thent to make them rows in board
+;;helped by AI as my original string->sudoku-row was not working properly
+(define (blank? s) (zero? (string-length (string-trim s))))
+(define (string->sudoku-row s)
+  (map string->number (string-split (string-trim s) " ")))
+(define (no-dups? xs)
+  (= (length xs) (length (remove-duplicates xs))))
 
-(define (readSudoku filename)
-  (define input-port (open-input-file filename))
-  (displayln "File opened successfully yayy")
+;; --- ROWS VALIDATION
+;; checks each row for duplicates
+;; if any row fails, sets is-board-valid to #f
+(define (rows-valid! board cur-board)
+  (set! is-board-valid #t)
+  (for ([i (in-naturals)] [row board])
+    (if (no-dups? row)
+        (printf "Board ~a row ~a OK~n" cur-board i)
+        (begin
+          (printf "Board ~a row ~a FAILED~n" cur-board i)
+          (set! is-board-valid #f))))
+  is-board-valid)
 
-;; Main loop with parameters:
-;; line: current line being read from file
-;; rows: counter for rows in current board (0-8, resets after each board)
-;; is-board-valid: tracks if current board has any duplicate rows
-;; cur-board-num: which board number we're currently processing
-(define (rowsValid)
-  (let loop ([line (read-line input-port)]  
-             [rows 0]                           
-             [is-board-valid #t]                 
-             [cur-board-num 1])               
-    ;; Only continue if not thSe eof
-    (when (not (eof-object? line))
-      ;; Converting the string line to a list of numbers
-      (define row (string->sudoku-row line))
-
-      ;; Check if current row has duplicates
-      (define current-row-valid (no-dups? row))
-
-      ;; Check if board was valid before this row
-      (define was-board-valid is-board-valid)
-
-      ;; Board is valid only if BOTH conditions are true
-      (define new-board-valid (and was-board-valid current-row-valid))
-
-      ;; Check if we just completed 9 rows (a full board)
-      (if (= (+ rows 1) 9)
-          ;; We just finished a board - report it and start new board
+;; --- COLUMNS VALIDATION
+;; checks each column for duplicates
+;; if any column fails, sets is-board-valid to #f
+(define (columns-valid! board cur-board)
+  (when is-board-valid
+    (for ([c (in-range 9)])
+      (define col (for/list ([r board]) (list-ref r c)))
+      (if (no-dups? col)
+          (printf "Board ~a col ~a good~n" cur-board c)
           (begin
-            (if new-board-valid
-                (printf "Board ~a passed first check~n" cur-board-num)
-                (printf "Board ~a is INVALID due to duplicates~n" cur-board-num))
-            (loop (read-line input-port) 0 #t (+ cur-board-num 1)))
-          ;; Still building current board - continue
-          (loop (read-line input-port) (+ rows 1) new-board-valid cur-board-num)))))
+            (printf "Board ~a col ~a UH OH~n" cur-board c)
+            (set! is-board-valid #f)))))
+  is-board-valid)
 
+;; --- BOXES VALIDATION
+;; checks each 3x3 box for duplicates
+;; if any box fails, sets is-board-valid to #f
+;;NOTE Ai co-pilot assisted with this function howver made an error it needed a nested for loop to work properly was only good for the diagnoal boxes.
+(define (boxes-valid! board cur-board)
+  (when is-board-valid
+    (for* ([br (in-range 3)]
+           [bc (in-range 3)])
+      (define box
+        (for*/list ([r (in-range (* br 3) (+ (* br 3) 3))]
+                    [c (in-range (* bc 3) (+ (* bc 3) 3))])
+          (list-ref (list-ref board r) c)))
+      (if (no-dups? box)
+          (printf "Board ~a box (~a,~a) good~n" cur-board br bc)
+          (begin
+            (printf "Board ~a box (~a,~a) Uh OH~n" cur-board br bc)
+            (set! is-board-valid #f)))))
+  is-board-valid)
 
+;; basic reading file function
+;;note that ai co-pilot helped me with this function as well as its basic code structure
+;; however I had to modify it to fit my needs and fix some errors it had
+(define (readSudoku filename)
+  (set! board-results (make-hash)) 
+  (define input-port (open-input-file filename))
+  (displayln "File opened successfully!!!!")
+  (let loop ([line (read-line input-port)]
+             [rows 0]
+             [cur-board 1]
+             [acc '()])
+    (cond
+      [(eof-object? line)
+       (close-input-port input-port)
+       (displayln "File closed :((")
+       board-results]
 
-(rowsValid)
-           
-(close-input-port input-port)
-(displayln "File closed")
-(void))
+      [(blank? line)
+       (loop (read-line input-port) rows cur-board acc)]
+
+      [else
+       (let* ([row       (string->sudoku-row line)]
+              [acc*      (cons row acc)]
+              [next-line (read-line input-port)])
+         (if (= (add1 rows) 9)
+             (let ([board (reverse acc*)])
+               (rows-valid! board cur-board)
+               (columns-valid! board cur-board)
+               (boxes-valid! board cur-board)
+               (hash-set! board-results cur-board is-board-valid)
+               (printf "Board ~a FINAL RESULT: ~a~n~n"
+                       cur-board (if is-board-valid "PASSED ALL TESTS ;D" "FAILED SOME TESTS :("))
+               (loop next-line 0 (add1 cur-board) '()))
+             (loop next-line (add1 rows) cur-board acc*)))])))
